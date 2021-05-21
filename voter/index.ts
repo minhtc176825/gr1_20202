@@ -1,4 +1,11 @@
 import * as crypto from 'crypto'
+import { resolve } from 'node:path'
+import * as readline from 'readline'
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+})
 
 class Transaction {
   constructor(
@@ -66,11 +73,18 @@ class Chain {
   public static instance = new Chain()
 
   chain: Block[]
+  wallets: Wallet[]
 
   constructor() {
     this.chain = [
       new TxBlock('', new Transaction(100, 'genesis', 'minh'))
     ]
+
+    this.wallets = []
+  }
+
+  addWallet(wallet: Wallet) {
+    this.wallets.push(wallet)
   }
 
   // Most recent block
@@ -127,21 +141,29 @@ class Chain {
 }
 
 class Wallet {
-  public publicKey: string;
-  public privateKey: string;
-
-  constructor() {
+  public id: number
+  public publicKey: string
+  public privateKey: string
+  public name: string
+  public balance: number
+  constructor(name: string, balance: number) {
     const keypair = crypto.generateKeyPairSync('rsa', {
       modulusLength: 2048,
       publicKeyEncoding: { type: 'spki', format: 'pem' },
       privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
     });
-
+    this.id = Chain.instance.wallets.length
     this.privateKey = keypair.privateKey;
     this.publicKey = keypair.publicKey;
+    this.name = name
+    this.balance = balance
   }
 
+
+
   sendMoney(amount: number, payeePublicKey: string) {
+
+    this.balance -= amount
     const transaction = new Transaction(amount, this.publicKey, payeePublicKey);
 
     const sign = crypto.createSign('SHA256');
@@ -194,36 +216,172 @@ class Election {
     return this.candidates.push(new Candidate(this.candidates.length + 1, _name, 0))
   }
 
-  // vote (_candidateId: number) {
-  //   if (!this.voters.get(_candidateId) && _candidateId > 0 && _candidateId <= this.candidates.length) {
-  //     this.voters.set(_candidateId, true)
-  //     this.candidates[_candidateId - 1].voteCount++
-  //     return 1
-  //   } else return 0
-  // }
+  showCandidates() {
+    for (var i = 0; i < this.candidates.length; i++) {
+      console.log(this.candidates[i].id + ' - ' + this.candidates[i].name + ' - ' + this.candidates[i].voteCount)
+    }
+  }
 }
 
 Election.instance.addCandidate('MINH')
 Election.instance.addCandidate('TRANG')
 Election.instance.addCandidate('QUAN')
 
-const satoshi = new Wallet();
-const bob = new Wallet();
-const alice = new Wallet();
+const satoshi = new Wallet('satoshi', 100)
+Chain.instance.addWallet(satoshi)
+const bob = new Wallet('bob', 100);
+Chain.instance.addWallet(bob)
+const alice = new Wallet('alice', 100);
+Chain.instance.addWallet(alice)
 
-satoshi.sendMoney(50, bob.publicKey);
-bob.sendMoney(23, alice.publicKey);
-alice.sendMoney(5, bob.publicKey);
+var user = Chain.instance.wallets[0]
 
-satoshi.vote(1)
-bob.vote(2)
-alice.vote(1)
-satoshi.vote(2)
+function menu() {
+  console.log('------------------------')
+  console.log('----E-VOTING SYSTEM ----')
+  console.log('1. View candidate list')
+  console.log('2. Vote')
+  console.log('3. Transfer money')
+  console.log('4. Switch wallet')
+  console.log('5. Check balance')
+  console.log('6. Get data from blockchain')
+  console.log('7. Quit')
+  console.log('------------------------')
+}
 
-console.log(Chain.instance)
-console.log('-----------------')
-console.log('Election result: ')
-console.log(Election.instance.candidates)
+function switchWallet(wallet: number) {
+  for (var i = 0; i < Chain.instance.wallets.length; i++) {
+    if (wallet === Chain.instance.wallets[i].id) {
+      return true
+    }
+  }
+  return false
+}
+
+// check if wallet exists or not
+function checkWallet(wallet: string) {
+  for (var i = 0; i < Chain.instance.wallets.length; i++) {
+    if (wallet === Chain.instance.wallets[i].name) return true
+  }
+
+  return false
+}
+
+// check if the wallet's balance is enough
+function checkBalance(amount: number) {
+  if (user.balance < amount) {
+    return false
+  } 
+
+  return true
+}
+
+// get wallet by name
+function getWalletPubKeyByName(name: string) {
+  for (var i = 0; i < Chain.instance.wallets.length; i++) {
+    if (name === Chain.instance.wallets[i].name) return Chain.instance.wallets[i].publicKey
+  }
+
+  return ''
+}
+
+function getWalletIdByName(name: string) {
+  for (var i = 0; i < Chain.instance.wallets.length; i++) {
+    if (name === Chain.instance.wallets[i].name) return Chain.instance.wallets[i].id
+  }
+
+  return -1
+}
+
+
+function newRequest() {
+  rl.question('Enter: ', (choice) => {
+    switch(choice) {
+      case '1':
+        console.log('Candidate list: ')
+        Election.instance.showCandidates()
+        menu()
+        newRequest()
+        break
+      case '2':
+
+        rl.question('You would like to vote for: ', (id) => {
+          user.vote(parseInt(id))
+          console.log('Thanks for voting. Here is the result:')
+          Election.instance.showCandidates()
+          menu()
+          newRequest()
+        })
+        break
+      case '3':
+        rl.question('Who you want to send money: ', (name) => {
+          
+          if (checkWallet(name)) {
+            
+            rl.question('How much you would like to send: ', (amount) => {
+              if (checkBalance(parseInt(amount))) {
+
+                user.sendMoney(parseInt(amount), getWalletPubKeyByName(name))
+                Chain.instance.wallets[getWalletIdByName(name)].balance += parseInt(amount)
+                console.log('Send successfully')
+                menu()
+                newRequest()
+              } else {
+                console.log('Not enough balance. Please try again next time.')
+                menu()
+                newRequest()
+              }
+              
+            })
+          } else {
+            console.log('This wallet does not exist')
+            menu()
+            newRequest()
+          }
+        })
+        break
+      case '4':
+        rl.question('Switch to wallet (enter the wallet id): ', (id) => {
+          if (switchWallet(parseInt(id))) {
+            user = Chain.instance.wallets[parseInt(id)]
+            console.log('Switched')
+            console.log('Current wallet: ' + user.name)
+            menu()
+            newRequest()
+          } else {
+            console.log('Wallet does not exist')
+            menu()
+            newRequest()
+          }
+          
+        })
+        break
+      case '5':
+        console.log('Balance: ' + user.balance)
+        menu()
+        newRequest()
+        break
+      case '6':
+        console.log('BLOCKCHAIN: ')
+        console.log(Chain.instance.chain) 
+        menu()
+        newRequest()
+        break
+      case '7':
+        console.log('Exiting...')
+        rl.close()
+        break
+      default: break
+    }
+  })
+  
+}
+
+console.log('Current wallet: ' + user.name)
+menu()
+newRequest()
+
+
 
 
 
